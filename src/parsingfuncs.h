@@ -2,7 +2,7 @@
 
 # define ISCHAR_EMPTY(ch) (ch == ' ' || ch == '\t' || ch == '\v' || ch == '\r' || ch == '\f')
 
-static const int powerOfTenLookup[] = {1, 10, 100, 1000, 10000, 100000, 1000000};
+static const int powerOfTenLookup[] = {10e-1, 10e0, 10e1, 10e2, 10e3, 10e4, 10e5, 10e6};
 
 // Strips all empty characters to the left of the string
 void stripLine(char *string) {
@@ -19,26 +19,6 @@ void stripLine(char *string) {
     for (i = 0; string[i]; i++) {
         string[i] = (string[i] == '\n' || string[i] == ';') ? 0 : string[i];
     }
-}
-
-// Is what it's name says it is
-bool caseInsensitive_strcmp(char *str1, char *str2) {
-    char c1, c2;
-    int i;
-
-    for (i = 0; str1[i] && str2[i]; i++) {
-        // Convert chars to lowercase (oOOoOooOOOoo branchless programming)
-        c1 = str1[i] + (str1[i] >= 'A' && str1[i] <= 'Z') * 32;
-        c2 = str2[i] + (str2[i] >= 'A' && str2[i] <= 'Z') * 32;
-
-        if (c1 != c2)
-            return false;
-    }
-    
-    if (!str1[i] ^ !str2[i])
-        return false;
-
-    return true;
 }
 
 // String to integer
@@ -63,4 +43,13 @@ int strtoi(char *string, bool *error) {
 
     *error = false;
     return out;
+}
+
+// Starts with
+bool stringStartsWith(char *string, char *subString) {
+    for (int i = 0; subString[i]; i++) {
+        if (subString[i] != string[i])
+            return false;
+    }
+    return true;
 }

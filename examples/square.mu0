@@ -1,0 +1,25 @@
+; The number to square
+add 69
+sto $250
+
+; addr 250 is the argument
+square:
+    lda $250
+    sto $251
+
+_squaremulti:
+    lda $255
+    add $250
+    sto $255
+
+    lda $251
+    sub 1
+    sto $251
+    jne _squaremulti
+
+    jmp printVal        ; Return label
+
+printVal:
+lda $255
+put
+stp

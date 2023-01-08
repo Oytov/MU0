@@ -1,14 +1,15 @@
-; Temperature in degrees C
+; Temperature in degrees F
 add 100         ; Temperature
+sub 32          ; Subtract 32
 sto $1
 sub $1          ; Make acc 0
 
 ; Times to loop for the multiply loop
-add 9
+add 5
 sto $10
 
-; Multiply temp with 9
-multi9:
+; Multiply temp with 5
+multi5:
     ; Adds original temp once to temp
     lda $2
     add $1
@@ -19,13 +20,13 @@ multi9:
     sub 1
     sto $10
     ; Jump if looptimes isn't 0
-    jne multi9
+    jne multi5
 
-; Divide temp by 5
+; Divide temp by 9
 divide5:
-    ; Subtract temp by 5
+    ; Subtract temp by 9
     lda $2
-    sub 5
+    sub 9
     sto $2
 
     ; Add 1 to quotient
@@ -37,8 +38,7 @@ divide5:
     lda $2
     jge divide5
     lda $3          ; Loads quotient
+    sub 1
 
-; Add 32 and print value (only 31 cuz division method adds 1)
-add 31
 put
 stp

@@ -49,3 +49,8 @@ bool isArgAddr(instruc *instruction) {
 bool isArgPtr(instruc *instruction) {
     return instruction->data & 0b10;
 }
+
+// Special thing for add and sub instructions
+bool isArgAcc(instruc *instruction) {
+    return instruction->data & 0b100;
+}

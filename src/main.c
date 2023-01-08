@@ -4,19 +4,44 @@
 # include <stdlib.h>
 # include <stdbool.h>
 
+# include "caseIns_strcmp.h"
 # include "label.h"
 # include "instruction.h"
 # include "parsingfuncs.h"
 
-# define MAX_LABELS 256
-# define MAX_JUMPS  512
+#ifdef _WIN32
+# include <windows.h>
+#endif
+
+/* https://gist.github.com/rafaelglikis/ee7275bf80956a5308af5accb4871135
+ * Cross-platform sleep function for C
+ * @param int milliseconds
+ */
+void sleep_ms(int milliseconds) {
+    #ifdef _WIN32
+        Sleep(milliseconds);
+    #elif _POSIX_C_SOURCE >= 199309L
+        struct timespec ts;
+        ts.tv_sec = milliseconds / 1000;
+        ts.tv_nsec = (milliseconds % 1000) * 1000000;
+        nanosleep(&ts, NULL);
+    #else
+        usleep(milliseconds * 1000);
+    #endif
+}
+
+# define MAX_LABELS 512
+# define MAX_JUMPS  1024
 # define MAX_CODE_LINE 32768
-# define MEMSIZE 256
+
+# define CHECK_OUT_OF_BOUNDS_ADDR(memsize, address) (address >= memsize || address < 0)
 
 instruc code[MAX_CODE_LINE];
-label labels[MAX_LABELS];
 
-void MU0interpret(int lines);
+int MEMSIZE = 256;
+
+// Function declaration
+void MU0interpret(int lines, int clockrate);
 
 // Main function
 int main(int argc, char **argv) {
@@ -24,16 +49,68 @@ int main(int argc, char **argv) {
 
     // Help message
     if (argc == 1) {
-        puts("Usage: MU0 <file-path>");
+        puts("Arguments enclosed in <> are required. Ones enclosed in [] are optional.");
+        puts("Usage:\nMU0 <file-path> [-memsize=some-number] [-clock=some-number]");
         return 0;
     }
     // Too many arguments
-    if (argc > 2) {
+    if (argc > 4) {
         puts("Too many arguments");
         return 1;
     }
 
-    FILE *fptr = fopen(argv[1], "r");
+    int fileArg = -1,
+        clockArg = 0,
+        memSizeArg = 256;
+
+    // Parsing arguments
+    if (argc == 2)
+        fileArg = 1;
+    
+    else {
+        for (int i = 1; i < argc; i++) {
+            if (stringStartsWith(argv[i], "-clock"))
+                sscanf(argv[i], "-clock=%d", &clockArg);
+
+            else if (stringStartsWith(argv[i], "-memsize"))
+                sscanf(argv[i], "-memsize=%d", &memSizeArg);
+
+            else
+                fileArg = i;
+        }
+    }
+
+    // Checking values of arguments passed
+    if (fileArg == -1) {
+        puts("No input file");
+        return 1;
+    }
+    if (memSizeArg < 2) {
+        puts("Memory size cannot be less than 2");
+        return 1;
+    }
+    if (clockArg < 0) {
+        puts("Clock rate cannot be less than 1Hz");
+        return 1;
+    }
+    if (clockArg > 1000) {
+        puts("Clock rate can't be more than 1kHz");
+        return 1;
+    }
+
+    // Display warning if accuracy of clockrate drops below 90%
+    if (clockArg != 0) {
+        int tempCRA = (int)(1000 / clockArg);
+        float clockRateAccuracy = 100.0f * (float)tempCRA / (1000.0f / clockArg);
+
+        if (clockRateAccuracy < 90.0f)
+            printf("Warning: the accuracy of clockrate is only %.2f%%\n", clockRateAccuracy);
+    }
+
+    MEMSIZE = memSizeArg;
+
+    // Starting to read from the file
+    FILE *fptr = fopen(argv[fileArg], "r");
 
     // Unable to open file
     if (!fptr) {
@@ -45,7 +122,19 @@ int main(int argc, char **argv) {
     int lineNum = 0, dispLine = 0, temp1, tempi, labeln = 0, tmpLabeln = 0;
     bool tmperr;
 
-    tmpLabel *tmpLabels = calloc(MAX_JUMPS, sizeof(tmpLabel));
+    // The labels array
+    tmpLabel *tmpLabels = malloc(MAX_JUMPS * sizeof(tmpLabel));
+    label *labels = malloc(MAX_LABELS * sizeof(label));
+
+    // Safe guards
+    if (tmpLabels == NULL) {
+        printf("Error allocating %zuB of memory for array tmpLabels\n", MAX_JUMPS * sizeof(tmpLabel));
+        return 1;
+    }
+    if (labels == NULL) {
+        printf("Error allocating %zuB of memory for array labels\n", MAX_JUMPS * sizeof(label));
+        return 1;
+    }
 
     // Loop line by line through file
     while (!feof(fptr)) {
@@ -60,16 +149,14 @@ int main(int argc, char **argv) {
         dispLine++;
 
         // Skip if empty line
-        if (line[0] == 0) {
-            // dispLine++;
+        if (line[0] == 0)
             continue;
-        }
 
         // Doing shit
         temp = strtok(line, " ");
 
         // Load accumulator
-        if (caseInsensitive_strcmp(temp, "LDA")) {
+        if (caseIns_strcmp(temp, "LDA")) {
             code[lineNum].ins = LDA;
             code[lineNum].data = 0;
 
@@ -105,8 +192,8 @@ int main(int argc, char **argv) {
             }
 
             // Out of bounds mem addr
-            if (temp1 >= MEMSIZE || temp1 < 0) {
-                printf("Error on line %d. Memory address is out of bounds %d not in range 0 - %d\n", dispLine, temp1, MEMSIZE-1);
+            if (CHECK_OUT_OF_BOUNDS_ADDR(MEMSIZE, temp1)) {
+                printf("Error on line %d. Memory address is out of bounds %d not in range 0 to %d\n", dispLine, temp1, MEMSIZE-1);
                 return 1;
             }
 
@@ -114,7 +201,7 @@ int main(int argc, char **argv) {
         }
 
         // Store accumulator
-        else if (caseInsensitive_strcmp(temp, "STO")) {
+        else if (caseIns_strcmp(temp, "STO")) {
             code[lineNum].ins = STO;
             code[lineNum].data = 0;
 
@@ -150,8 +237,8 @@ int main(int argc, char **argv) {
             }
 
             // Out of bounds mem addr
-            if (temp1 >= MEMSIZE || temp1 < 0) {
-                printf("Error on line %d. Memory address is out of bounds %d not in range 0 - %d\n", dispLine, temp1, MEMSIZE-1);
+            if (CHECK_OUT_OF_BOUNDS_ADDR(MEMSIZE, temp1)) {
+                printf("Error on line %d. Memory address is out of bounds %d not in range 0 to %d\n", dispLine, temp1, MEMSIZE-1);
                 return 1;
             }
 
@@ -159,7 +246,7 @@ int main(int argc, char **argv) {
         }
 
         // Add
-        else if (caseInsensitive_strcmp(temp, "ADD")) {
+        else if (caseIns_strcmp(temp, "ADD")) {
             code[lineNum].ins = ADD;
             code[lineNum].data = 0;
 
@@ -169,6 +256,13 @@ int main(int argc, char **argv) {
             if (temp == NULL) {
                 printf("Error on line %d. ADD requires an argument\n", dispLine);
                 return 1;
+            }
+
+            // add acc
+            if (caseIns_strcmp(temp, "acc")) {
+                code[lineNum].data |= 0b100;
+                lineNum++;
+                continue;
             }
 
             // Argument is memory address
@@ -184,12 +278,6 @@ int main(int argc, char **argv) {
                 }
 
                 temp1 = strtoi(temp, &tmperr);
-
-                // Out of bounds mem addr
-                if (temp1 >= MEMSIZE || temp1 < 0) {
-                    printf("Error on line %d. Memory address is out of bounds %d not in range 0 - %d\n", dispLine, temp1, MEMSIZE-1);
-                    return 1;
-                }
             }
             else if (temp[0] == '*') {
                 printf("Error on line %d. Pointer cannot exist without being a memory address\n", dispLine);
@@ -208,11 +296,17 @@ int main(int argc, char **argv) {
                 return 1;
             }
 
+            // Out of bounds mem addr
+            if (isArgAddr(&code[lineNum]) && CHECK_OUT_OF_BOUNDS_ADDR(MEMSIZE, temp1)) {
+                printf("Error on line %d. Memory address is out of bounds %d not in range 0 to %d\n", dispLine, temp1, MEMSIZE-1);
+                return 1;
+            }
+
             code[lineNum].arg = temp1;
         }
 
         // Subtract
-        else if (caseInsensitive_strcmp(temp, "SUB")) {
+        else if (caseIns_strcmp(temp, "SUB")) {
             code[lineNum].ins = SUB;
             code[lineNum].data = 0;
 
@@ -222,6 +316,13 @@ int main(int argc, char **argv) {
             if (temp == NULL) {
                 printf("Error on line %d. SUB requires an argument\n", dispLine);
                 return 1;
+            }
+
+            // sub acc
+            if (caseIns_strcmp(temp, "acc")) {
+                code[lineNum].data |= 0b100;
+                lineNum++;
+                continue;
             }
 
             // Argument is memory address
@@ -237,12 +338,6 @@ int main(int argc, char **argv) {
                 }
 
                 temp1 = strtoi(temp, &tmperr);
-
-                // Out of bounds mem addr
-                if (temp1 >= MEMSIZE || temp1 < 0) {
-                    printf("Error on line %d. Memory address is out of bounds %d not in range 0 - %d\n", dispLine, temp1, MEMSIZE-1);
-                    return 1;
-                }
             }
             else if (temp[0] == '*') {
                 printf("Error on line %d. Pointer cannot exist without being a memory address\n", dispLine);
@@ -261,11 +356,17 @@ int main(int argc, char **argv) {
                 return 1;
             }
 
+            // Out of bounds mem addr
+            if (isArgAddr(&code[lineNum]) && CHECK_OUT_OF_BOUNDS_ADDR(MEMSIZE, temp1)) {
+                printf("Error on line %d. Memory address is out of bounds %d not in range 0 to %d\n", dispLine, temp1, MEMSIZE-1);
+                return 1;
+            }
+
             code[lineNum].arg = temp1;
         }
 
         // Jump.
-        else if (caseInsensitive_strcmp(temp, "JMP")) {
+        else if (caseIns_strcmp(temp, "JMP")) {
             code[lineNum].ins = JMP;
 
             temp = strtok(0, " ");
@@ -285,7 +386,7 @@ int main(int argc, char **argv) {
         }
 
         // Jump if accumulator >= 0
-        else if (caseInsensitive_strcmp(temp, "JGE")) {
+        else if (caseIns_strcmp(temp, "JGE")) {
             code[lineNum].ins = JGE;
 
             temp = strtok(0, " ");
@@ -305,7 +406,7 @@ int main(int argc, char **argv) {
         }
 
         // Jump if accumulator != 0
-        else if (caseInsensitive_strcmp(temp, "JNE")) {
+        else if (caseIns_strcmp(temp, "JNE")) {
             code[lineNum].ins = JNE;
 
             temp = strtok(0, " ");
@@ -325,12 +426,12 @@ int main(int argc, char **argv) {
         }
 
         // Stop program
-        else if (caseInsensitive_strcmp(temp, "STP")) {
+        else if (caseIns_strcmp(temp, "STP")) {
             code[lineNum].ins = STP;
         }
 
         // Put accumulator to stdout
-        else if (caseInsensitive_strcmp(temp, "PUT")) {
+        else if (caseIns_strcmp(temp, "PUT")) {
             code[lineNum].ins = PUT;
         }
 
@@ -369,7 +470,6 @@ int main(int argc, char **argv) {
     int labelNo;
     for (int i = 0; i < tmpLabeln; i++) {
         labelNo = nameInLabelArray(tmpLabels[i].name, labels, MAX_JUMPS);
-        // printf("labelNo: %d\n", labelNo);
 
         if (labelNo != -1) {
             code[tmpLabels[i].lineNum].arg = labels[labelNo].lineNum;
@@ -382,18 +482,29 @@ int main(int argc, char **argv) {
     }
 
     free(tmpLabels);
+    free(labels);
 
     // Finally interpret
-    MU0interpret(lineNum);
+    MU0interpret(lineNum, clockArg);
     
     return 0;
 }
 
 // The function that interpretes
-void MU0interpret(int lines) {
-    int memory[MEMSIZE] = {0},
+void MU0interpret(int lines, int clockrate) {
+    int *memory = calloc(MEMSIZE, sizeof(int)),
         acc = 0,
-        instructionPointer;
+        instructionPointer,
+        pointer,
+        sleepTime = 0;
+
+    if (clockrate > 0) sleepTime = 1000 / clockrate;
+    
+    // Safeguard
+    if (memory == NULL) {
+        printf("Error allocating %zuB of memory for array memory\n", MEMSIZE * sizeof(int));
+        return;
+    }
 
     for (instructionPointer = 0; instructionPointer <= lines; instructionPointer++) {
         switch (code[instructionPointer].ins) {
@@ -401,7 +512,16 @@ void MU0interpret(int lines) {
             case LDA:
                 // Pointer 
                 if (isArgPtr(&code[instructionPointer])) {
-                    puts("No functionality for pointers");
+                    pointer = memory[code[instructionPointer].arg];
+                    if (CHECK_OUT_OF_BOUNDS_ADDR(MEMSIZE, pointer)) {
+                        printf("Runtime error\nPointer at address %d is out of bounds. Pointer pointing to %d. ", code[instructionPointer].arg, pointer);
+                        printf("Memory addresses are from 0 to %d\n", MEMSIZE -1);
+
+                        free(memory);
+                        return;
+                    }
+
+                    acc = memory[pointer];
                     break;
                 }
 
@@ -412,7 +532,16 @@ void MU0interpret(int lines) {
             case STO:
                 // Pointer 
                 if (isArgPtr(&code[instructionPointer])) {
-                    puts("No functionality for pointers");
+                    pointer = memory[code[instructionPointer].arg];
+                    if (CHECK_OUT_OF_BOUNDS_ADDR(MEMSIZE, pointer)) {
+                        printf("Runtime error\nPointer at address %d is out of bounds. Pointer pointing to %d. ", code[instructionPointer].arg, pointer);
+                        printf("Memory addresses are from 0 to %d\n", MEMSIZE -1);
+
+                        free(memory);
+                        return;
+                    }
+
+                    memory[pointer] = acc;
                     break;
                 }
 
@@ -424,11 +553,23 @@ void MU0interpret(int lines) {
                 if (isArgAddr(&code[instructionPointer])) {
                     // Pointer
                     if (isArgPtr(&code[instructionPointer])) {
-                        puts("No functionality for pointers");
+                        pointer = memory[code[instructionPointer].arg];
+                        if (CHECK_OUT_OF_BOUNDS_ADDR(MEMSIZE, pointer)) {
+                            printf("Runtime error\nPointer at address %d is out of bounds. Pointer pointing to %d. ", code[instructionPointer].arg, pointer);
+                            printf("Memory addresses are from 0 to %d\n", MEMSIZE -1);
+
+                            free(memory);
+                            return;
+                        }
+
+                        acc += memory[pointer];
                         break;
                     }
 
                     acc += memory[code[instructionPointer].arg];
+                }
+                else if ( isArgAcc(&code[instructionPointer]) ) {
+                    acc += acc;
                 }
                 else {
                     acc += code[instructionPointer].arg;
@@ -440,11 +581,23 @@ void MU0interpret(int lines) {
                 if (isArgAddr(&code[instructionPointer])) {
                     // Pointer
                     if (isArgPtr(&code[instructionPointer])) {
-                        puts("No functionality for pointers");
+                        pointer = memory[code[instructionPointer].arg];
+                        if (CHECK_OUT_OF_BOUNDS_ADDR(MEMSIZE, pointer)) {
+                            printf("Runtime error\nPointer at address %d is out of bounds. Pointer pointing to %d. ", code[instructionPointer].arg, pointer);
+                            printf("Memory addresses are from 0 to %d\n", MEMSIZE -1);
+
+                            free(memory);
+                            return;
+                        }
+
+                        acc -= memory[pointer];
                         break;
                     }
 
                     acc -= memory[code[instructionPointer].arg];
+                }
+                else if ( isArgAcc(&code[instructionPointer]) ) {
+                    acc = 0;
                 }
                 else {
                     acc -= code[instructionPointer].arg;
@@ -486,11 +639,9 @@ void MU0interpret(int lines) {
                 printf(".ins: %d\t.data: %d\t.arg%d\n", code[instructionPointer].ins, code[instructionPointer].data, code[instructionPointer].arg);
                 break;
         }
+    
+    if (clockrate) sleep_ms(sleepTime);
     }
-}
 
-/*
-TODO: pointer support
-      add acc
-      sub acc
-*/
+    free(memory);
+}
